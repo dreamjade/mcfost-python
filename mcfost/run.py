@@ -3,14 +3,13 @@ import subprocess
 import logging
 _log = logging.getLogger('mcfost')
 import numpy as np
-
-
+import psutil
 import astropy
 
 # Functions for actually running MCFOST models under Python control
 
 
-def run_all_files(directory, loop_forever=False, **kwargs):
+def run_all_files(directory, loop_forever=False, log_show=True, **kwargs):
     """ Run all parameter files in a directory.
 
     Parameters
@@ -29,13 +28,14 @@ def run_all_files(directory, loop_forever=False, **kwargs):
     keepgoing = True
     while keepgoing:
         parfiles = glob.glob(os.path.join(directory, "*.par"))
-        _log.info("Found {0} files to process: {1}".format(len(parfiles), ", ".join(parfiles)))
+        if log_show:
+            _log.info("Found {0} files to process: {1}".format(len(parfiles), ", ".join(parfiles)))
         for filename in parfiles:
             run_one_file(filename, **kwargs)
         keepgoing = loop_forever
 
 
-def run_one_file(filename, wavelengths=[], move_to_subdir=True, delete_previous=True):
+def run_one_file(filename, wavelengths=[], move_to_subdir=True, delete_previous=True, log_show=True, timeout=0):
     """ Run a given parameter file.
 
     Parameters
@@ -54,11 +54,12 @@ def run_one_file(filename, wavelengths=[], move_to_subdir=True, delete_previous=
         raise TypeError("First argument to run_all must be a filename.")
     if not os.path.exists(filename):
         raise IOError("Nonexistent file: "+filename)
-
-    _log.info("Running MCFOST for: "+filename)
+    if log_show:
+        _log.info("Running MCFOST for: "+filename)
 
     if move_to_subdir:
-        _log.info("Relocating {0} to a subdirectory of the same name.".format(os.path.basename(filename)))
+        if log_show:
+            _log.info("Relocating {0} to a subdirectory of the same name.".format(os.path.basename(filename)))
         modelname = os.path.splitext(os.path.basename(filename))[0]
         modeldir = os.path.splitext(os.path.dirname(filename))[0]
         #os.chdir(modeldir)
@@ -70,19 +71,28 @@ def run_one_file(filename, wavelengths=[], move_to_subdir=True, delete_previous=
         filename = os.path.join(modelname, os.path.basename(filename))
 
 
-    run_sed(filename, delete_previous=delete_previous)
+    run_sed(filename, delete_previous=delete_previous, log_show=log_show, timeout=timeout)
     
     if np.asarray(wavelengths).shape == ():
         #when only one wavelength is given
         wavelengths = [wavelengths]
 
     for wl in wavelengths:
-        run_image(filename, wl, delete_previous=delete_previous)
+        run_image(filename, wl, delete_previous=delete_previous, log_show=log_show, timeout=timeout)
 
-    _log.info("Calculation complete.")
+    if log_show:
+        _log.info("Calculation complete.")
 
+def killall(main_process):
+    try:
+        parent = psutil.Process(main_process.pid)
+    except:
+        return 0
+    for child in parent.children(recursive=True):  # or parent.children() for recursive=False
+        child.kill()
+    parent.kill()
 
-def run_sed(filename,raytrace=True, delete_previous=True, *args ):
+def run_sed(filename,raytrace=True, delete_previous=True, log_show=True, timeout=0, *args):
     """ Run a MCFOST calculation of the SED
 
     Parameters
@@ -96,7 +106,8 @@ def run_sed(filename,raytrace=True, delete_previous=True, *args ):
     if not os.path.exists(filename):
         raise IOError("Nonexistent file: "+filename)
 
-    _log.info("Computing SED for {0}".format(filename))
+    if log_show:
+        _log.info("Computing SED for {0}".format(filename))
 
     directory = os.path.dirname(os.path.abspath(filename))
 
@@ -105,21 +116,37 @@ def run_sed(filename,raytrace=True, delete_previous=True, *args ):
     # will fail, so it's useful to do this cleaning here.
     outputpath = os.path.join(directory, 'data_th')
     if delete_previous and os.path.isdir(outputpath):
-        _log.debug("Removing previous calculation results")
+        if log_show:
+            _log.debug("Removing previous calculation results")
         import shutil
         shutil.rmtree(outputpath, ignore_errors=True)
 
     cmdstr = 'mcfost '+os.path.basename(filename)
     if raytrace: cmdstr += " -rt"
+    if timeout:
+        p1 =subprocess.Popen("echo  '>> "+ cmdstr+"' >> output.log",shell=True, cwd=directory)
+        p2 = subprocess.Popen(cmdstr+' >> output.log',shell=True, cwd=directory)
+        p3 = subprocess.Popen('chmod -R g+w *',shell=True, cwd=directory)
+        try:
+            p1.wait(timeout=timeout)
+            p2.wait(timeout=timeout)
+            p3.wait(timeout=timeout)
+            if log_show:
+                _log.info("SED results written to {0}".format(outputpath))
+        except:
+            killall(p1)
+            killall(p2)
+            killall(p3)
+    else:
+        subprocess.call("echo  '>> "+ cmdstr+"' >> output.log",shell=True, cwd=directory)
+        result = subprocess.call(cmdstr+' >> output.log',shell=True, cwd=directory)
+        subprocess.call('chmod -R g+w *',shell=True, cwd=directory)
+        if log_show:
+            _log.info("SED results written to {0}".format(outputpath))
+            _log.debug("Result: {0}".format(result))
 
-    subprocess.call("echo  '>> "+ cmdstr+"' >> output.log",shell=True, cwd=directory)
-    result = subprocess.call(cmdstr+' >> output.log',shell=True, cwd=directory)
-    subprocess.call('chmod -R g+w *',shell=True, cwd=directory)
-    _log.info("SED results written to {0}".format(outputpath))
-    _log.debug("Result: {0}".format(result))
 
-
-def run_image(filename, wavelength, raytrace=True,  delete_previous=True, *args):
+def run_image(filename, wavelength, raytrace=True,  delete_previous=True, log_show=True, timeout=0, *args):
     """ Run a MCFOST calculation of the image
 
     Parameters
@@ -135,7 +162,8 @@ def run_image(filename, wavelength, raytrace=True,  delete_previous=True, *args)
     if not os.path.exists(filename):
         raise IOError("Nonexistent file: "+filename)
 
-    _log.info("Computing image at {1} microns for {0}".format(filename, wavelength))
+    if log_show:
+        _log.info("Computing image at {1} microns for {0}".format(filename, wavelength))
 
     directory = os.path.dirname(os.path.abspath(filename))
 
@@ -144,7 +172,8 @@ def run_image(filename, wavelength, raytrace=True,  delete_previous=True, *args)
     # will fail, so it's useful to do this cleaning here.
     outputpath = os.path.join(directory, 'data_'+str(wavelength))
     if delete_previous and os.path.isdir(outputpath):
-        _log.debug("Removing previous calculation results")
+        if log_show:
+            _log.debug("Removing previous calculation results")
         import shutil
         shutil.rmtree(outputpath, ignore_errors=True)
 
@@ -152,12 +181,24 @@ def run_image(filename, wavelength, raytrace=True,  delete_previous=True, *args)
 
     cmdstr = 'mcfost '+os.path.basename(filename)+' -img '+str(wavelength)
     if raytrace: cmdstr += " -rt"
+    if timeout:
+        p1=subprocess.Popen("echo  '>> "+ cmdstr+"' >> output.log",shell=True, cwd=directory)
+        p2=subprocess.Popen(cmdstr +' >> output.log',shell=True, cwd=directory)
+        p3=subprocess.Popen('chmod -R g+w *',shell=True, cwd=directory)
+        try:
+            p1.wait(timeout=timeout)
+            p2.wait(timeout=timeout)
+            p3.wait(timeout=timeout)            
+        except:
+            killall(p1)
+            killall(p2)
+            killall(p3)
+    else:
+        subprocess.call("echo  '>> "+ cmdstr+"' >> output.log",shell=True, cwd=directory)
+        subprocess.call(cmdstr +' >> output.log',shell=True, cwd=directory)
+        subprocess.call('chmod -R g+w *',shell=True, cwd=directory)
 
-    subprocess.call("echo  '>> "+ cmdstr+"' >> output.log",shell=True, cwd=directory)
-    subprocess.call(cmdstr +' >> output.log',shell=True, cwd=directory)
-    subprocess.call('chmod -R g+w *',shell=True, cwd=directory)
-
-def run_dust_prop(filename,  delete_previous=True,  sed=False, *args):
+def run_dust_prop(filename,  delete_previous=True,  sed=False, log_show=True, *args):
     """ Run a MCFOST calculation of the dust properties
 
     Parameters
@@ -175,7 +216,8 @@ def run_dust_prop(filename,  delete_previous=True,  sed=False, *args):
     if not os.path.exists(filename):
         raise IOError("Nonexistent file: "+filename)
 
-    _log.info("Computing dust properties for {0}".format(filename))
+    if log_show:
+        _log.info("Computing dust properties for {0}".format(filename))
 
     directory = os.path.dirname(os.path.abspath(filename))
 
@@ -184,7 +226,8 @@ def run_dust_prop(filename,  delete_previous=True,  sed=False, *args):
     # will fail, so it's useful to do this cleaning here.
     outputpath = os.path.join(directory, 'data_dust')
     if delete_previous and os.path.isdir(outputpath):
-        _log.debug("Removing previous calculation results")
+        if log_show:
+            _log.debug("Removing previous calculation results")
         import shutil
         shutil.rmtree(outputpath, ignore_errors=True)
     if sed:
@@ -200,7 +243,7 @@ def run_dust_prop(filename,  delete_previous=True,  sed=False, *args):
 # Functions for MCMC interface
 
 
-def mcmc_evaluate_params(modelparams, base_paramfile, paramnames, observations):
+def mcmc_evaluate_params(modelparams, base_paramfile, paramnames, observations, log_show=True):
     """ Given a set of parameters, set up and evaluate the model parameter file,
     and return the log of the probability relative to the observations
 
@@ -217,7 +260,7 @@ def mcmc_evaluate_params(modelparams, base_paramfile, paramnames, observations):
     """
 
 
-def grid_generator(base_paramfile, paramsdict, filename_prefix=None, start_counter=1):
+def grid_generator(base_paramfile, paramsdict, filename_prefix=None, start_counter=1, log_show=True):
     """Generate a grid of parameter files by varying specified MCFOST parameters
 
     Parameters
