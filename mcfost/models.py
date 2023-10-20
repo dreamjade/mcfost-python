@@ -9,7 +9,7 @@ import numpy as np
 import astropy.io.fits as fits
 import astropy.io.ascii as ascii
 import astropy.units as units
-import collections
+import collections.abc
 import logging
 _log = logging.getLogger('mcfost')
 
@@ -19,7 +19,7 @@ from .paramfiles import Paramfile, find_paramfile
 from . import utils
 
 
-class ModelImageCollection(collections.Mapping):
+class ModelImageCollection(collections.abc.Mapping):
 
     """ 
     Helper collection class to implement on-demand loading of
@@ -59,7 +59,7 @@ class ModelImageCollection(collections.Mapping):
     def filenames(self):
         return [self._getpath(k) for k in self.keys()]
 
-    # Implement magic methods to make this compliant with the collections.Mapping abstract base class
+    # Implement magic methods to make this compliant with the collections.abc.Mapping abstract base class
     # that way it will behave just like a python Dict
     def keys(self):
         # cast these as a list
@@ -881,7 +881,7 @@ class ObservedImage(object):
  #       print "Filename for image: "+imagefilename
  #       raise NotImplementedError("Not implemented yet!")
 
-class OBSImageCollection(collections.Mapping):
+class OBSImageCollection(collections.abc.Mapping):
     """ Helper collectin class to implement on-demand loading of 
     image data via a dict interface. The dict looks like it
     always contains all available images, and can be indexed via
@@ -934,7 +934,7 @@ class OBSImageCollection(collections.Mapping):
     def filenames(self):
         return [self._getpath(k) for k in self.keys()]
 
-    # Implement magic methods to make this compliant with the collections.Mapping abstract base class
+    # Implement magic methods to make this compliant with the collections.abc.Mapping abstract base class
     # that way it will behave just like a python Dict
     def keys(self):
         # cast these as a list
