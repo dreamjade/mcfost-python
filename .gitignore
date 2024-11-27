@@ -33,3 +33,7 @@ nosetests.xml
 .mr.developer.cfg
 .project
 .pydevproject
+
+# ipython_checkpoints
+.ipynb_checkpoints
+mcfost/.ipynb_checkpoints
